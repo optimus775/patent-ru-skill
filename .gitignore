@@ -4,7 +4,13 @@ disclosures/
 *.tmp
 ~$*
 
-# Кэш результатов CNIPA-поиска в tools/
+# Локальные секреты и окружение
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Временные HTML-результаты в tools/
 tools/_last_result*.html
 
 # Python / tools

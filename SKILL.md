@@ -35,7 +35,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, WebSearch, Bash
 | Загрузка инструкций | `Read` соответствующего файла из `prompts/` |
 | Сканирование проекта | Поиск и чтение документации, кода, схем; большие репозитории сначала сужать через `Grep`/`Glob` |
 | Word/PPT как исходные материалы | Сначала конвертировать `.docx`/`.pptx` в Markdown через `tools/docx_to_md.py` и `tools/pptx_to_md.py`, затем читать полученный `.md` |
-| Поиск уровня техники | Перед выполнением читать `prompts/prior_art_search.md`; временно сохраняется CNIPA-first workflow через `tools/cnipa_epub_search.py`, переход на ФИПС будет отдельной задачей |
+| Поиск уровня техники | Перед выполнением читать `prompts/prior_art_search.md`; использовать Google Patents через `WebSearch` и официальный поиск ФИПС через `tools/fips_search.py` + Browserless |
 | Фигуры и схемы | В черновике использовать fenced `mermaid`; перед выдачей прогонять `tools/mermaid_render.py`, который заменяет схемы на PNG и по умолчанию создает `.docx` |
 | Экспорт в Word | `tools/md_to_docx.py` или автоматический вызов из `tools/mermaid_render.py` |
 | Итерации | Для нового материала читать `iteration_context.md` + `merger.md`; для исправлений читать `iteration_context.md` + `correction_handler.md` |

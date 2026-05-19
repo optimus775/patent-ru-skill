@@ -10,12 +10,14 @@
 pip install -r requirements.txt
 ```
 
-CNIPA-поиск:
+Поиск ФИПС через Browserless:
 
 ```bash
-pip install -r tools/requirements-cnipa.txt
-python -m playwright install chromium
+pip install -r tools/requirements-fips.txt
+cp .env.example .env
 ```
+
+В `.env` укажите `BROWSERLESS_WS_ENDPOINT`. Локальный Chromium не нужен: Playwright подключается к удаленному Browserless по CDP.
 
 Рендер Mermaid:
 
@@ -107,14 +109,18 @@ python3 tools/iteration_dialog_log.py --case-dir outputs/case --kind merge \
 
 Для исправлений используйте `--kind correct`.
 
-## CNIPA-скрипты
+## fips_search.py
 
-CNIPA-скрипты намеренно оставлены без изменения в российской адаптации. Они остаются временным каналом поиска уровня техники до добавления workflow для ФИПС/Роспатента.
+Ищет российские патентные документы в ФИПС через Browserless.
 
-| Скрипт | Назначение |
-|---|---|
-| `cnipa_epub_search.py` | одношаговый поиск и разбор результатов CNIPA |
-| `cnipa_epub_crawler.py` | низкоуровневый fetch-helper |
-| `cnipa_epub_parse.py` | парсер HTML-результатов |
+```bash
+python3 tools/fips_search.py "управление очередью" --limit 20
+```
 
-Сгенерированные HTML-файлы CNIPA, если они появляются, игнорируются Git.
+Stdout содержит одну машинно-читаемую строку:
+
+```text
+FIPS_HITS_JSON: [...]
+```
+
+Если `BROWSERLESS_WS_ENDPOINT` не задан или ФИПС недоступен, скрипт возвращает структурированный элемент с `error_code`; endpoint и token не печатаются.

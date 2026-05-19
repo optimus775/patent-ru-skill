@@ -65,16 +65,22 @@ npm install
 npx puppeteer browsers install chrome-headless-shell
 ```
 
-### CNIPA-поиск
+### Поиск ФИПС через Browserless
 
-CNIPA-поиск временно сохранен без изменения логики. Для его работы:
+Для официального поиска по российским патентным документам используется `tools/fips_search.py`, который подключается к отдельному Browserless-инстансу:
 
 ```bash
-pip install -r tools/requirements-cnipa.txt
-python -m playwright install chromium
+pip install -r tools/requirements-fips.txt
+cp .env.example .env
 ```
 
-Если зависимости CNIPA не установлены, этап поиска уровня техники может использовать WebSearch и другие открытые источники.
+В `.env` укажите полный WebSocket endpoint:
+
+```dotenv
+BROWSERLESS_WS_ENDPOINT=wss://production-sfo.browserless.io?token=YOUR_BROWSERLESS_TOKEN
+```
+
+Локальный Chromium устанавливать не нужно. Если Browserless не настроен или ФИПС недоступен, этап поиска уровня техники продолжает работу по Google Patents и другим проверяемым источникам.
 
 ## Проверка
 
@@ -84,4 +90,5 @@ python tools/docx_to_md.py --help
 python tools/pptx_to_md.py --help
 python tools/mermaid_render.py --help
 python tools/iteration_dialog_log.py --help
+python tools/fips_search.py --help
 ```

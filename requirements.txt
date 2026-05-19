@@ -3,6 +3,3 @@ python-docx>=1.1.0
 # Для Mermaid -> PNG нужен Node.js: выполните npm install в tools/ или используйте npx; см. tools/README.md.
 mammoth>=1.6.0
 python-pptx>=0.6.21
-
-# Опциональный CNIPA-поиск на Step 5 использует Playwright и вынесен в отдельный файл зависимостей.
-#   pip install -r tools/requirements-cnipa.txt && python -m playwright install chromium

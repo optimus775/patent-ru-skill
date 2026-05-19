@@ -21,7 +21,7 @@
 |---|---|
 | Сканирование проекта | Читает документы, код, схемы и Office-материалы; `.docx`/`.pptx` перед анализом конвертируются в Markdown |
 | Отбор решения | Выделяет кандидатные технические решения, проверяет техническую проблему, результат и существенные признаки |
-| Уровень техники | Временно сохраняет CNIPA-first workflow из исходного форка; переход на ФИПС запланирован отдельной задачей |
+| Уровень техники | Комбинирует Google Patents через `WebSearch` и официальный поиск ФИПС через Browserless |
 | Российская структура | Готовит описание изобретения, формулу, реферат и фигуры по российской логике заявки |
 | Фигуры | Использует `mermaid` как рабочий формат схем и `tools/mermaid_render.py` для PNG/Word |
 | Итерации | Дорабатывает уже созданный комплект новым файлом и ведет `revision_dialog_log.md` |
@@ -55,12 +55,15 @@ git clone <repo-url> ~/.cursor/skills/patent-ru-skill
 pip install -r requirements.txt
 ```
 
-Опционально для текущего CNIPA-поиска:
+Опционально для поиска ФИПС через Browserless:
 
 ```bash
-pip install -r tools/requirements-cnipa.txt
-python -m playwright install chromium
+pip install -r tools/requirements-fips.txt
+cp .env.example .env
+# затем укажите BROWSERLESS_WS_ENDPOINT в .env
 ```
+
+Локальный Chromium устанавливать не нужно: `tools/fips_search.py` подключается к отдельному Browserless-инстансу по CDP.
 
 Для рендера `mermaid` нужен Node.js. Рекомендуемый вариант:
 
@@ -91,7 +94,7 @@ npm install
 patent-ru-skill/
 ├── SKILL.md                    # входная точка skill
 ├── prompts/                    # поэтапные инструкции агенту
-├── tools/                      # конвертация Office/Word, mermaid, CNIPA, журнал итераций
+├── tools/                      # конвертация Office/Word, mermaid, ФИПС, журнал итераций
 ├── docs/                       # PRD и структура проекта
 ├── examples/                   # демонстрационный набор исходных материалов
 ├── outputs/                    # пользовательские результаты, игнорируются Git
@@ -108,7 +111,7 @@ patent-ru-skill/
 
 - [SKILL.md](SKILL.md) - триггеры и основной workflow.
 - [INSTALL.md](INSTALL.md) - детали установки.
-- [tools/README.md](tools/README.md) - конвертация Markdown/Word, Office, mermaid и CNIPA.
+- [tools/README.md](tools/README.md) - конвертация Markdown/Word, Office, mermaid и ФИПС.
 - [docs/PRD.md](docs/PRD.md) - продуктовая логика.
 - [docs/skill-structure.md](docs/skill-structure.md) - структура репозитория.
 - [prompts/template_reference.md](prompts/template_reference.md) - шаблоны описания, формулы, реферата и фигур.
