@@ -1,10 +1,10 @@
-# 用户产出（整目录不提交）
+# Пользовательские результаты, каталог целиком не коммитится
 outputs/
 disclosures/
 *.tmp
 ~$*
 
-# 国知局抓取结果缓存（tools/）
+# Кэш результатов CNIPA-поиска в tools/
 tools/_last_result*.html
 
 # Python / tools
