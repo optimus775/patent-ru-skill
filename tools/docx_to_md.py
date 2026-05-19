@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-将 Word（.docx）转为 Markdown，并把内嵌图片抽取到磁盘，便于 Step 2 扫描与 Agent Read。
+Конвертирует Word (.docx) в Markdown и извлекает встроенные изображения для Step 2.
 
-依赖 mammoth（见仓库根目录 requirements.txt）。
+Зависимость: mammoth; см. requirements.txt в корне репозитория.
 
-用法:
+Примеры:
   python docx_to_md.py --input design.docx --output outputs/case/design.md
   python docx_to_md.py -i a.docx -o b/out.md --media-dir b/my_images
 
-默认图片目录：与输出 .md 同级的「{md 文件名}_media/」，Markdown 中为相对路径引用。
+Каталог изображений по умолчанию: соседний каталог {md_stem}_media/.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def _require_mammoth():
         import mammoth
     except ImportError:
         print(
-            "缺少依赖 mammoth。请在技能根目录执行: pip install -r requirements.txt",
+            "Не найдена зависимость mammoth. Выполните в корне skill: pip install -r requirements.txt",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -47,10 +47,10 @@ def _run(
     mammoth = _require_mammoth()
 
     if not input_docx.is_file():
-        print(f"输入文件不存在: {input_docx}", file=sys.stderr)
+        print(f"Входной файл не найден: {input_docx}", file=sys.stderr)
         return 2
     if input_docx.suffix.lower() != ".docx":
-        print("警告: 期望 .docx（Office Open XML）；旧版 .doc 不支持。", file=sys.stderr)
+        print("Предупреждение: ожидается .docx (Office Open XML); старый .doc не поддерживается.", file=sys.stderr)
 
     output_md = output_md.resolve()
     output_md.parent.mkdir(parents=True, exist_ok=True)
@@ -72,7 +72,7 @@ def _run(
             with image.open() as f:
                 out_path.write_bytes(f.read())
         except Exception as e:
-            print(f"警告: 抽取图片失败 ({filename}): {e}", file=sys.stderr)
+            print(f"Предупреждение: не удалось извлечь изображение ({filename}): {e}", file=sys.stderr)
             return {"src": "", "alt": ""}
 
         try:
@@ -94,24 +94,24 @@ def _run(
 
     text = (result.value or "").strip()
     header = (
-        f"<!-- 由 docx_to_md.py 自 {input_docx.name} 转换，勿手改本行元信息 -->\n\n"
+        f"<!-- Конвертировано docx_to_md.py из {input_docx.name}; не редактируйте эту строку метаданных вручную. -->\n\n"
     )
     output_md.write_text(header + text + ("\n" if text else ""), encoding="utf-8")
 
-    print(f"已写入: {output_md}")
-    print(f"图片目录: {media_dir}")
+    print(f"Записано: {output_md}")
+    print(f"Каталог изображений: {media_dir}")
     return 0
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Word (.docx) → Markdown + 抽取图片")
-    p.add_argument("-i", "--input", required=True, type=Path, help="输入 .docx 路径")
-    p.add_argument("-o", "--output", required=True, type=Path, help="输出 .md 路径")
+    p = argparse.ArgumentParser(description="Word (.docx) -> Markdown с извлечением изображений")
+    p.add_argument("-i", "--input", required=True, type=Path, help="Путь к входному .docx")
+    p.add_argument("-o", "--output", required=True, type=Path, help="Путь к выходному .md")
     p.add_argument(
         "--media-dir",
         type=Path,
         default=None,
-        help="图片输出目录（默认：与 .md 同级的 {md 主名}_media）",
+        help="Каталог для изображений; по умолчанию {md_stem}_media рядом с .md",
     )
     args = p.parse_args()
     return _run(args.input, args.output, args.media_dir)

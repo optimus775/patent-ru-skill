@@ -2,19 +2,19 @@ package scheduler
 
 import "time"
 
-// HeartbeatConfig 节点心跳契约参数（从属特征 P3）。
+// HeartbeatConfig хранит параметры heartbeat-контракта узла.
 type HeartbeatConfig struct {
 	Interval    time.Duration
-	DeadAfter   time.Duration // 超过该时间未收到心跳则判定假死
+	DeadAfter   time.Duration // считать вероятно недоступным после такого интервала без heartbeat
 }
 
-// NodeHeartbeat 最近一次心跳时间（示例结构）。
+// NodeHeartbeat хранит время последнего heartbeat.
 type NodeHeartbeat struct {
 	NodeID   string
 	LastSeen time.Time
 }
 
-// IsProbablyDead 判定节点是否假死（示意）。
+// IsProbablyDead проверяет, является ли узел вероятно недоступным.
 func IsProbablyDead(h NodeHeartbeat, now time.Time, cfg HeartbeatConfig) bool {
 	return now.Sub(h.LastSeen) > cfg.DeadAfter
 }

@@ -2,7 +2,7 @@ package scheduler
 
 import "math"
 
-// Score 根据需求向量与节点画像计算匹配分（简化线性加权 + 过载惩罚，示例实现）。
+// Score рассчитывает упрощенный score соответствия по требованиям задачи и профилю узла.
 func Score(d TaskDemand, p NodeProfile) float64 {
 	if p.CPUAvail <= 0 || p.MemFreeMB <= 0 {
 		return -1

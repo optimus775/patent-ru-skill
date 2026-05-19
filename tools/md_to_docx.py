@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-将 Markdown 转为 Word（.docx），按标题层级映射为 Word 内置「标题 1–9」样式，
-便于交底书交付代理人或所内流程。
+Конвертирует Markdown в Word (.docx), сопоставляя Markdown-заголовки со стилями Word.
 
-支持：ATX 标题 (#–######)、段落、**粗体**、行内 `代码`、无序/有序列表、
-围栏代码块、简单 GFM 表格、引用块（>）、水平线（---）、行内图片 ``![](path.png)``
-（在最大宽、最大高约束下**等比缩放**，竖图自动缩小宽度以整图落入版面）。
+Поддерживаемое подмножество: ATX-заголовки, абзацы, жирный текст, inline code,
+простые списки, fenced code, GFM-таблицы, цитаты, горизонтальные линии и
+изображения отдельной строкой.
 
-**连续多行正文**（中间无空行、且非列表/标题等）时，**每一行**输出为 Word 中**独立一段**，
-以便「（1）…（2）…」等分条换行；若须在同一段内接排，请写**同一行**内或用 Markdown 空行分隔逻辑段。
+Каждая непустая строка основного текста выводится отдельным абзацем Word; это
+сохраняет построчную структуру черновиков патентных материалов.
 
-定稿宜先用同目录 **`mermaid_render.py`** 将 **mermaid** 转为 PNG；若个别块生图失败仍保留 `` ```mermaid`` 围栏，本文档会将其作为**代码块**写入 Word。
+Если Markdown содержит mermaid, перед финальной конвертацией запустите
+`mermaid_render.py`. Оставшиеся fences будут записаны как блоки кода.
 
-用法：
+Примеры:
   python md_to_docx.py --input disclosure.md --output disclosure.docx
-  python md_to_docx.py -i a.md -o b.docx --base-dir .   # 解析图片相对路径
+  python md_to_docx.py -i a.md -o b.docx --base-dir .
 
-依赖：python-docx
+Зависимость: python-docx.
 """
 
 from __future__ import annotations
@@ -30,13 +30,13 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-# 插图最大尺寸（英寸）：在常见 A4、默认边距下保证整图可见、按比例缩放（不过宽也不过高）。
+# Максимальный размер изображения в дюймах для типовой страницы A4.
 _DEFAULT_IMAGE_MAX_W_IN = 5.5
 _DEFAULT_IMAGE_MAX_H_IN = 8.2
 
 
 def _image_pixel_size(path: Path) -> tuple[int, int] | None:
-    """读取常见位图宽高（像素），失败返回 None。不依赖 Pillow。"""
+    """Читает размеры распространенных bitmap-форматов без Pillow."""
     try:
         raw = path.read_bytes()
     except OSError:
@@ -93,7 +93,7 @@ def _fit_image_display_inches(
     max_w_in: float,
     max_h_in: float,
 ) -> tuple[Inches, Inches]:
-    """在不超过 max_w / max_h 的前提下等比缩放，使整图落入版面。"""
+    """Вписывает изображение в заданные ограничения ширины и высоты."""
     if px_w <= 0 or px_h <= 0:
         return Inches(max_w_in), Inches(max_h_in * 0.5)
     aw = max_w_in
@@ -104,7 +104,7 @@ def _fit_image_display_inches(
     return Inches(aw), Inches(ah)
 
 
-def _set_run_font(run, name: str = "宋体", size_pt: float | None = None, bold: bool | None = None):
+def _set_run_font(run, name: str = "Times New Roman", size_pt: float | None = None, bold: bool | None = None):
     run.font.name = name
     run._element.rPr.rFonts.set(qn("w:eastAsia"), name)
     if size_pt is not None:
@@ -114,20 +114,20 @@ def _set_run_font(run, name: str = "宋体", size_pt: float | None = None, bold:
 
 
 def _add_inline_to_paragraph(paragraph, text: str, *, mono: bool = False):
-    """解析 **粗体**、`行内代码` 与普通文本，写入同一段落。"""
+    """Добавляет жирный текст, inline code и обычный текст в один абзац."""
     if not text:
         return
-    # 拆分为：粗体、行内代码、普通
+    # Разбиваем строку на жирный текст, inline code и обычные фрагменты.
     pattern = re.compile(r"(\*\*[^*]+?\*\*|`[^`]+?`)")
     pos = 0
     for m in pattern.finditer(text):
         if m.start() > pos:
             run = paragraph.add_run(text[pos : m.start()])
-            _set_run_font(run, "Consolas" if mono else "宋体", 10.5 if not mono else 9)
+            _set_run_font(run, "Consolas" if mono else "Times New Roman", 10.5 if not mono else 9)
         token = m.group(1)
         if token.startswith("**"):
             run = paragraph.add_run(token[2:-2])
-            _set_run_font(run, "宋体", 10.5, bold=True)
+            _set_run_font(run, "Times New Roman", 10.5, bold=True)
         else:  # `code`
             run = paragraph.add_run(token[1:-1])
             _set_run_font(run, "Consolas", 9)
@@ -135,16 +135,16 @@ def _add_inline_to_paragraph(paragraph, text: str, *, mono: bool = False):
         pos = m.end()
     if pos < len(text):
         run = paragraph.add_run(text[pos:])
-        _set_run_font(run, "Consolas" if mono else "宋体", 10.5 if not mono else 9)
+        _set_run_font(run, "Consolas" if mono else "Times New Roman", 10.5 if not mono else 9)
 
 
 def _add_heading(doc: Document, level: int, text: str):
-    """level 1–9 对应 Word 标题 1–标题 9；去除行内标记时保留可读文本。"""
+    """Сопоставляет уровни заголовков со стилями Word и убирает inline-маркеры."""
     plain = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
     plain = re.sub(r"`([^`]+)`", r"\1", plain)
     h = doc.add_heading(plain, level=min(max(level, 1), 9))
     for run in h.runs:
-        _set_run_font(run, "黑体" if level <= 2 else "宋体")
+        _set_run_font(run, "Arial" if level <= 2 else "Times New Roman")
 
 
 def _add_body_paragraph(doc: Document, text: str):
@@ -154,7 +154,7 @@ def _add_body_paragraph(doc: Document, text: str):
     _add_inline_to_paragraph(p, text)
     for run in p.runs:
         if run.font.name in (None, ""):
-            _set_run_font(run, "宋体", 10.5)
+            _set_run_font(run, "Times New Roman", 10.5)
 
 
 def _add_code_block(doc: Document, lines: list[str]):
@@ -178,7 +178,7 @@ def _add_list_item(doc: Document, text: str, ordered: bool, base_dir: Path | Non
     p.paragraph_format.space_after = Pt(3)
     _add_inline_to_paragraph(p, text)
     for run in p.runs:
-        _set_run_font(run, "宋体", 10.5)
+        _set_run_font(run, "Times New Roman", 10.5)
 
 
 def _is_table_row(line: str) -> bool:
@@ -215,7 +215,7 @@ def _add_table(doc: Document, rows: list[list[str]]):
             p = cell.paragraphs[0]
             _add_inline_to_paragraph(p, cell_text)
             for run in p.runs:
-                _set_run_font(run, "宋体", 10)
+                _set_run_font(run, "Times New Roman", 10)
 
 
 def _add_horizontal_rule(doc: Document):
@@ -223,7 +223,7 @@ def _add_horizontal_rule(doc: Document):
     p.paragraph_format.space_after = Pt(8)
     p.paragraph_format.space_before = Pt(8)
     run = p.add_run("─" * 32)
-    _set_run_font(run, "宋体", 8)
+    _set_run_font(run, "Times New Roman", 8)
     run.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
 
 
@@ -242,7 +242,7 @@ def _try_add_image(
     path = (base_dir / src).resolve() if not Path(src).is_absolute() else Path(src)
     if not path.is_file():
         p = doc.add_paragraph()
-        p.add_run(f"[图片缺失: {alt or src} — {path}]")
+        p.add_run(f"[изображение не найдено: {alt or src} - {path}]")
         return True
     try:
         dims = _image_pixel_size(path)
@@ -255,7 +255,7 @@ def _try_add_image(
             doc.add_picture(str(path), width=Inches(max_w_in))
     except Exception:
         p = doc.add_paragraph()
-        p.add_run(f"[图片无法嵌入: {path}]")
+        p.add_run(f"[изображение невозможно встроить: {path}]")
     return True
 
 
@@ -267,12 +267,12 @@ def convert_md_to_docx(
     image_max_h_in: float = _DEFAULT_IMAGE_MAX_H_IN,
 ) -> Document:
     doc = Document()
-    # 默认正文样式
+    # Стиль основного текста по умолчанию.
     try:
         style = doc.styles["Normal"]
-        style.font.name = "宋体"
+        style.font.name = "Times New Roman"
         if style._element.rPr is not None:
-            style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+            style._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
         style.font.size = Pt(10.5)
     except (AttributeError, KeyError):
         pass
@@ -285,7 +285,7 @@ def convert_md_to_docx(
         nonlocal para_buf
         if not para_buf:
             return
-        # 每行独立成段，避免「（1）…\n（2）…」被空格拼成一段（Word 内不换行）
+        # Каждую исходную строку выводим отдельным абзацем.
         for p in para_buf:
             t = p.strip()
             if t:
@@ -301,7 +301,7 @@ def convert_md_to_docx(
             i += 1
             continue
 
-        # 围栏代码块
+        # Fenced code block.
         if line.strip().startswith("```"):
             flush_paragraph()
             fence_lang = line.strip()[3:].strip()
@@ -315,7 +315,7 @@ def convert_md_to_docx(
             _add_code_block(doc, code_lines)
             continue
 
-        # 图片独占一行
+        # Изображение отдельной строкой.
         if line.strip().startswith("![") and "](" in line:
             flush_paragraph()
             _try_add_image(
@@ -328,14 +328,14 @@ def convert_md_to_docx(
             i += 1
             continue
 
-        # 水平线
+        # Горизонтальная линия.
         if re.match(r"^[\s\-*_]{3,}\s*$", line) and set(line.strip()) <= {"-", "*", "_", " "}:
             flush_paragraph()
             _add_horizontal_rule(doc)
             i += 1
             continue
 
-        # 标题
+        # Заголовок.
         m = re.match(r"^(#{1,6})\s+(.+)$", line)
         if m:
             flush_paragraph()
@@ -346,7 +346,7 @@ def convert_md_to_docx(
             i += 1
             continue
 
-        # 引用
+        # Цитата.
         if line.lstrip().startswith("> "):
             flush_paragraph()
             quote = line.lstrip()[2:].strip()
@@ -355,11 +355,11 @@ def convert_md_to_docx(
             p.paragraph_format.space_after = Pt(4)
             _add_inline_to_paragraph(p, quote)
             for run in p.runs:
-                _set_run_font(run, "宋体", 10.5)
+                _set_run_font(run, "Times New Roman", 10.5)
             i += 1
             continue
 
-        # 表格块
+        # Таблица.
         if _is_table_row(line):
             flush_paragraph()
             table_rows: list[list[str]] = []
@@ -371,7 +371,7 @@ def convert_md_to_docx(
             _add_table(doc, table_rows)
             continue
 
-        # 无序列表
+        # Неупорядоченный список.
         um = re.match(r"^(\s*)[-*+]\s+(.+)$", line)
         if um:
             flush_paragraph()
@@ -379,7 +379,7 @@ def convert_md_to_docx(
             i += 1
             continue
 
-        # 有序列表
+        # Упорядоченный список.
         om = re.match(r"^(\s*)\d+\.\s+(.+)$", line)
         if om:
             flush_paragraph()
@@ -395,33 +395,33 @@ def convert_md_to_docx(
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Markdown → Word（标题样式映射）")
-    p.add_argument("-i", "--input", required=True, help="输入 .md 路径")
-    p.add_argument("-o", "--output", required=True, help="输出 .docx 路径")
+    p = argparse.ArgumentParser(description="Markdown -> Word с сопоставлением стилей заголовков")
+    p.add_argument("-i", "--input", required=True, help="Путь к входному .md")
+    p.add_argument("-o", "--output", required=True, help="Путь к выходному .docx")
     p.add_argument(
         "--base-dir",
         default=None,
-        help="解析 ![](/相对路径) 图片时的根目录（默认使用 .md 所在目录）",
+        help="Базовый каталог для относительных путей изображений; по умолчанию каталог .md",
     )
     p.add_argument(
         "--image-max-width-inches",
         type=float,
         default=_DEFAULT_IMAGE_MAX_W_IN,
         metavar="IN",
-        help=f"插图最大宽度（英寸，默认 {_DEFAULT_IMAGE_MAX_W_IN}），与高度共同约束等比缩放",
+        help=f"Максимальная ширина изображения в дюймах; по умолчанию {_DEFAULT_IMAGE_MAX_W_IN}",
     )
     p.add_argument(
         "--image-max-height-inches",
         type=float,
         default=_DEFAULT_IMAGE_MAX_H_IN,
         metavar="IN",
-        help=f"插图最大高度（英寸，默认 {_DEFAULT_IMAGE_MAX_H_IN}），避免竖图仅按宽度缩放后超出单页可视区域",
+        help=f"Максимальная высота изображения в дюймах; по умолчанию {_DEFAULT_IMAGE_MAX_H_IN}",
     )
     args = p.parse_args(argv)
 
     in_path = Path(args.input).resolve()
     if not in_path.is_file():
-        print(f"错误：找不到输入文件 {in_path}", file=sys.stderr)
+        print(f"Ошибка: входной файл не найден: {in_path}", file=sys.stderr)
         return 1
 
     base = Path(args.base_dir).resolve() if args.base_dir else in_path.parent
@@ -429,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         md_text = in_path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         md_text = in_path.read_text(encoding="utf-8", errors="replace")
-        print("警告：输入文件含非 UTF-8 字节，已使用替换字符解码后继续转换。", file=sys.stderr)
+        print("Предупреждение: входной файл содержит не-UTF-8 байты; декодировано с заменой символов.", file=sys.stderr)
 
     doc = convert_md_to_docx(
         md_text,
@@ -440,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.output).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))
-    print(f"已写入: {out_path}")
+    print(f"Записано: {out_path}")
     return 0
 
 

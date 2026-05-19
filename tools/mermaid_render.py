@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
 """
-将 Markdown 中的 **mermaid**（`` ```mermaid`` ``）围栏块逐块渲染为 PNG，
-并在输出 Markdown 中用 ``![](相对路径)`` 替换原代码块，便于 ``md_to_docx.py`` 将图嵌入 Word。
+Рендерит fenced mermaid-блоки в Markdown в PNG и заменяет каждый блок ссылкой на
+изображение, чтобы `md_to_docx.py` мог встроить фигуры в Word.
 
-**Mermaid 渲染后端（``mmdc``）**检测顺序见 ``_find_mmdc_invocation``：
-1. ``tools/node_modules``（``npm install`` 官方 ``@mermaid-js/mermaid-cli``）；
-2. **PATH 上的 ``mmdc``**（通常为 ``npm install -g @mermaid-js/mermaid-cli``）；
-3. **Node.js + npx** 临时拉取 ``@mermaid-js/mermaid-cli``（无本地安装时）。
+Порядок поиска backend для Mermaid:
+1. `tools/node_modules/.bin/mmdc` после локального `npm install`;
+2. `mmdc` в PATH;
+3. `npx -y @mermaid-js/mermaid-cli mmdc`.
 
-交底书 **3.2 系统框图**与 **3.4 流程图**均使用 fenced mermaid；**不要** ASCII「文字箭头」流程图或框图。
+Для черновиков патентной заявки используйте fenced mermaid как рабочий формат
+фигур и запускайте этот скрипт перед выдачей Markdown/Word.
 
-**降级**：某一围栏 ``mmdc`` 生图失败时**不中断**：该处**保留原** `` ```mermaid`` … `` ``` `` 围栏；其余块照常渲染。仍写出 .md 并**照常尝试** ``md_to_docx.py``（Word 中失败块以代码块形式出现）。
+Если один mermaid-блок не рендерится, скрипт сохраняет исходный fence, рендерит
+остальные блоки, записывает Markdown и все равно пробует создать Word.
 
-**清晰度**：默认对 ``mmdc`` 传入较大视口（``-w`` / ``-H``）与 ``-s 2``（Puppeteer 像素密度），PNG 在 Word 中按约 5.5 英寸宽嵌入时更锐利。可用 ``--mmdc-scale 3`` 等进一步提高（文件更大）。
+Параметры viewport и scale по умолчанию подобраны для читаемых фигур в Word.
 
-用法：
+Примеры:
   python tools/mermaid_render.py -i draft.md -o disclosure.md
-  # 默认在同目录生成 disclosure.docx；失败时 stderr 会给出可复制的 md_to_docx 命令
+  # По умолчанию также записывает disclosure.docx.
   python tools/mermaid_render.py -i draft.md -o out/disclosure.md --docx out/custom.docx
-  python tools/mermaid_render.py -i draft.md -o disclosure.md --no-docx   # 仅 Markdown
+  python tools/mermaid_render.py -i draft.md -o disclosure.md --no-docx
 
-写出 .md 后**默认**调用 ``md_to_docx.py``；Word 失败不导致进程失败（退出码 0），并提示手动转换。
+Ошибка конвертации Word не прерывает процесс; скрипт печатает команду для ручного запуска.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ from pathlib import Path
 
 
 def _local_mmdc() -> tuple[list[str], bool] | None:
-    """``tools/npm install`` 后可用 ``node_modules/.bin/mmdc``，避免每次 npx 拉包。"""
+    """Использует локальный node_modules/.bin/mmdc, если он доступен."""
     here = Path(__file__).resolve().parent
     if sys.platform == "win32":
         cand = here / "node_modules" / ".bin" / "mmdc.cmd"
@@ -48,9 +50,8 @@ def _local_mmdc() -> tuple[list[str], bool] | None:
 
 def _find_mmdc_invocation() -> tuple[list[str], bool]:
     """
-    返回 (argv 前缀, use_shell)。
-    Windows 上 npx 常为 .ps1，无独立 .exe，需 shell=True 调用 ``npx ...``。
-    PATH 中的 ``mmdc`` 一般为 npm 全局安装的官方 CLI。
+    Возвращает (argv prefix, use_shell).
+    В Windows npx может быть .ps1-wrapper и требовать shell=True.
     """
     local = _local_mmdc()
     if local:
@@ -69,7 +70,7 @@ def _mmdc_extra_args(
     width: int,
     height: int,
 ) -> list[str]:
-    """传给 mmdc 的分辨率相关参数（-s 为 Puppeteer deviceScaleFactor，显著影响 PNG 清晰度）。"""
+    """Формирует параметры разрешения для mmdc."""
     return [
         "-s",
         str(scale),
@@ -139,7 +140,7 @@ def _render_one_mermaid(
             )
         if r.returncode != 0:
             err = (r.stderr or r.stdout or "").strip()
-            raise RuntimeError(f"mmdc 失败 (exit {r.returncode}): {err[:2000]}")
+            raise RuntimeError(f"mmdc завершился с ошибкой (exit {r.returncode}): {err[:2000]}")
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -161,9 +162,8 @@ def render_markdown_mermaid(
     mmdc_height: int = 1050,
 ) -> tuple[str, int, int]:
     """
-    返回 (新 markdown 全文, 成功转为 PNG 的块数, 生图失败而保留围栏的块数)。
-    资源目录为 out_md_path.parent / assets_rel。
-    失败的块原样写回 `` ```mermaid`` … `` ``` ``，不抛错。
+    Возвращает (новый Markdown, число успешных блоков, число неудачных блоков).
+    Неудачные блоки возвращаются в исходном fenced mermaid виде.
     """
     lines = md_text.splitlines(keepends=True)
     out: list[str] = []
@@ -202,7 +202,7 @@ def render_markdown_mermaid(
             except Exception as e:
                 failed += 1
                 print(
-                    f"[mermaid_render] 第 {block_idx} 个 mermaid 围栏生图失败（已保留源码）：{e}",
+                    f"[mermaid_render] mermaid-блок {block_idx} не отрендерен; исходник сохранен: {e}",
                     file=sys.stderr,
                 )
                 out.append(fence_open)
@@ -214,7 +214,7 @@ def render_markdown_mermaid(
             ok += 1
             rel = f"{assets_rel.strip('/')}/{fname}".replace("\\", "/")
             out.append("\n")
-            out.append(f"![图示 {ok}]({rel})\n")
+            out.append(f"![Фиг. {ok}]({rel})\n")
             out.append("\n")
             continue
         out.append(line)
@@ -225,7 +225,7 @@ def render_markdown_mermaid(
 
 def _print_manual_docx_hint(out_md: Path, docx_out: Path, base_dir: Path, md_script: Path) -> None:
     print(
-        "提示：可手动将上述 Markdown 转为 Word（需已 pip install -r requirements.txt）：",
+        "Подсказка: Markdown можно вручную конвертировать в Word после установки requirements.txt:",
         file=sys.stderr,
     )
     if md_script.is_file():
@@ -242,14 +242,14 @@ def _print_manual_docx_hint(out_md: Path, docx_out: Path, base_dir: Path, md_scr
         print("  " + " ".join(shlex.quote(p) for p in parts), file=sys.stderr)
     else:
         print(
-            "  python tools/md_to_docx.py -i <上述.md> -o <输出.docx> --base-dir <.md 所在目录>",
+            "  python tools/md_to_docx.py -i <output.md> -o <output.docx> --base-dir <md directory>",
             file=sys.stderr,
         )
 
 
 def try_write_docx(out_md: Path, docx_out: Path) -> bool:
     """
-    调用同目录下的 md_to_docx.py。成功返回 True；失败打印警告与手动命令，返回 False。
+    Вызывает соседний md_to_docx.py. Возвращает True при успехе и False при ошибке.
     """
     tools_dir = Path(__file__).resolve().parent
     md_script = tools_dir / "md_to_docx.py"
@@ -257,7 +257,7 @@ def try_write_docx(out_md: Path, docx_out: Path) -> bool:
     docx_out.parent.mkdir(parents=True, exist_ok=True)
 
     if not md_script.is_file():
-        print("警告：未找到 md_to_docx.py，跳过 Word。", file=sys.stderr)
+        print("Предупреждение: md_to_docx.py не найден; Word не создается.", file=sys.stderr)
         _print_manual_docx_hint(out_md, docx_out, base_dir, md_script)
         return False
 
@@ -279,81 +279,81 @@ def try_write_docx(out_md: Path, docx_out: Path) -> bool:
             timeout=300,
         )
     except subprocess.TimeoutExpired:
-        print("警告：生成 Word 超时（300s）。", file=sys.stderr)
+        print("Предупреждение: генерация Word превысила 300 секунд.", file=sys.stderr)
         _print_manual_docx_hint(out_md, docx_out, base_dir, md_script)
         return False
     except OSError as e:
-        print(f"警告：无法启动 md_to_docx：{e}", file=sys.stderr)
+        print(f"Предупреждение: не удалось запустить md_to_docx: {e}", file=sys.stderr)
         _print_manual_docx_hint(out_md, docx_out, base_dir, md_script)
         return False
 
     if r.returncode != 0:
-        print(f"警告：md_to_docx 失败（退出码 {r.returncode}）。", file=sys.stderr)
+        print(f"Предупреждение: md_to_docx завершился с кодом {r.returncode}.", file=sys.stderr)
         err = (r.stderr or r.stdout or "").strip()
         if err:
             print(err[:2000], file=sys.stderr)
         _print_manual_docx_hint(out_md, docx_out, base_dir, md_script)
         return False
 
-    print(f"已写入 Word: {docx_out}", file=sys.stderr)
+    print(f"Word записан: {docx_out}", file=sys.stderr)
     return True
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="Markdown 内 mermaid 围栏 → PNG，默认再生成同名 Word"
+        description="Рендерит mermaid fences в PNG и опционально создает одноименный Word"
     )
-    p.add_argument("-i", "--input", required=True, type=Path, help="含 mermaid 围栏的 .md")
-    p.add_argument("-o", "--output", required=True, type=Path, help="输出 .md（图片引用）")
+    p.add_argument("-i", "--input", required=True, type=Path, help="Путь к входному .md")
+    p.add_argument("-o", "--output", required=True, type=Path, help="Путь к выходному .md со ссылками на изображения")
     p.add_argument(
         "--assets-dir",
         default="mermaid_figures",
-        help="mermaid 生成 PNG 的相对子目录（默认 mermaid_figures）",
+        help="Относительный каталог для PNG из mermaid; по умолчанию mermaid_figures",
     )
     p.add_argument(
         "--docx",
         type=Path,
         default=None,
         metavar="PATH",
-        help="输出 .docx 路径（默认与 -o 同主文件名、扩展名 .docx）",
+        help="Путь к выходному .docx; по умолчанию имя -o с расширением .docx",
     )
     p.add_argument(
         "--no-docx",
         action="store_true",
-        help="不生成 Word，仅输出替换图片后的 Markdown",
+        help="Не генерировать Word; записать только Markdown со ссылками на изображения",
     )
     p.add_argument(
         "--mmdc-scale",
         type=float,
         default=2.0,
         metavar="N",
-        help="mmdc -s：Puppeteer 缩放（默认 2，约 2 倍像素密度；越大越清晰但文件更大）",
+        help="mmdc -s / масштаб Puppeteer; по умолчанию 2",
     )
     p.add_argument(
         "--mmdc-width",
         type=int,
         default=1400,
         metavar="PX",
-        help="mmdc -w：渲染视口宽度像素（默认 1400，复杂 flowchart 不易裁切）",
+        help="mmdc -w, ширина viewport в пикселях; по умолчанию 1400",
     )
     p.add_argument(
         "--mmdc-height",
         type=int,
         default=1050,
         metavar="PX",
-        help="mmdc -H：渲染视口高度像素（默认 1050）",
+        help="mmdc -H, высота viewport в пикселях; по умолчанию 1050",
     )
     args = p.parse_args(argv)
     if args.mmdc_scale <= 0:
-        print("错误：--mmdc-scale 须为正数", file=sys.stderr)
+        print("Ошибка: --mmdc-scale должен быть положительным", file=sys.stderr)
         return 1
     if args.mmdc_width < 400 or args.mmdc_height < 400:
-        print("错误：--mmdc-width / --mmdc-height 建议不小于 400", file=sys.stderr)
+        print("Ошибка: --mmdc-width и --mmdc-height должны быть не меньше 400", file=sys.stderr)
         return 1
 
     in_path = args.input.resolve()
     if not in_path.is_file():
-        print(f"错误：找不到输入 {in_path}", file=sys.stderr)
+        print(f"Ошибка: входной файл не найден: {in_path}", file=sys.stderr)
         return 1
 
     out_path = args.output.resolve()
@@ -374,16 +374,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     out_path.write_text(new_md, encoding="utf-8")
-    parts = [f"已写入 {out_path}（mermaid：{n_ok} 处已转为 PNG"]
+    parts = [f"Записано {out_path} (mermaid: {n_ok} блок(ов) преобразовано в PNG"]
     if n_fail:
-        parts.append(f"，{n_fail} 处生图失败已保留 fenced 源码")
-    parts.append("）")
+        parts.append(f", {n_fail} блок(ов) не отрендерены и сохранены как fenced source")
+    parts.append(")")
     print("".join(parts), file=sys.stderr)
     if n_fail:
         print(
-            "[mermaid_render] 已继续生成 Markdown"
-            + (" 并将尝试 Word" if not args.no_docx else "")
-            + "；请检查 Node/mmdc 或修正语法后重跑本脚本。",
+            "[mermaid_render] Markdown создан"
+            + ("; далее будет попытка создать Word" if not args.no_docx else "")
+            + "; проверьте Node/mmdc или исправьте синтаксис mermaid перед повторным запуском.",
             file=sys.stderr,
         )
 

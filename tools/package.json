@@ -1,5 +1,5 @@
 {
-  "name": "patent-disclosure-skill-tools",
+  "name": "patent-ru-skill-tools",
   "private": true,
   "description": "Optional local install for @mermaid-js/mermaid-cli (mmdc); speeds up mermaid_render.py",
   "devDependencies": {
