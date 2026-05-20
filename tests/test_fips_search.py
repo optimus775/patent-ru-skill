@@ -21,6 +21,7 @@ from fips_search import (  # noqa: E402
     load_browserless_endpoint,
     normalize_publication_number,
     parse_fips_html,
+    sanitize_error_message,
 )
 
 
@@ -72,6 +73,18 @@ class FipsSearchTests(unittest.TestCase):
         payload = json.loads(line.split(": ", 1)[1])
         self.assertEqual(payload[0]["publication_number"], "RU2765432C1")
         self.assertEqual(payload[0]["source_adapter"], "fips")
+
+    def test_sanitize_error_message_redacts_browserless_token(self) -> None:
+        os.environ["BROWSERLESS_WS_ENDPOINT"] = "wss://10.0.0.1:3000?token=secret"
+
+        message = sanitize_error_message(
+            "Cannot connect to wss://10.0.0.1:3000?token=secret; retry ws://10.0.0.1:3000/; ECONNREFUSED 10.0.0.1:3000"
+        )
+
+        self.assertNotIn("secret", message)
+        self.assertNotIn("10.0.0.1", message)
+        self.assertNotIn("3000", message)
+        self.assertIn("[BROWSERLESS_WS_ENDPOINT]", message)
 
     def test_dedupe_hits_prefers_first_match(self) -> None:
         hits = dedupe_hits(

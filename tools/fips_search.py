@@ -21,11 +21,11 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable, Sequence
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 
-FIPS_SEARCH_URL = "https://www.fips.ru/iiss/search.xhtml"
-FIPS_DB_URL = "https://www.fips.ru/iiss/db.xhtml"
+FIPS_SEARCH_URL = "https://www1.fips.ru/iiss/search.xhtml"
+FIPS_DB_URL = "https://www1.fips.ru/iiss/db.xhtml"
 SOURCE_ADAPTER = "fips"
 DEFAULT_DATABASE = "Патентные документы РФ (рус.)"
 OUTPUT_PREFIX = "FIPS_HITS_JSON:"
@@ -95,10 +95,30 @@ def load_browserless_endpoint(env_file: Path | None = None) -> str | None:
 def error_result(error_code: str, message: str, retryable: bool = False) -> dict[str, object]:
     return {
         "error_code": error_code,
-        "message": message,
+        "message": sanitize_error_message(message),
         "retryable": retryable,
         "source_adapter": SOURCE_ADAPTER,
     }
+
+
+def sanitize_error_message(message: str) -> str:
+    endpoint = load_browserless_endpoint()
+    sanitized = message
+    if endpoint:
+        sanitized = sanitized.replace(endpoint, "[BROWSERLESS_WS_ENDPOINT]")
+        parsed = urlparse(endpoint)
+        if parsed.netloc:
+            sanitized = sanitized.replace(parsed.netloc, "[BROWSERLESS_HOST]")
+        if parsed.hostname:
+            sanitized = sanitized.replace(parsed.hostname, "[BROWSERLESS_HOST]")
+    sanitized = re.sub(
+        r"(?i)(wss?://[^\s\"']*?[?&]token=)[^&\s\"']+",
+        r"\1[REDACTED]",
+        sanitized,
+    )
+    sanitized = re.sub(r"(?i)(token=)[^&\s\"']+", r"\1[REDACTED]", sanitized)
+    sanitized = re.sub(r"(?i)wss?://[^\s\"']+", "[BROWSERLESS_WS_ENDPOINT]", sanitized)
+    return sanitized
 
 
 def format_hits_line(items: Sequence[object]) -> str:
@@ -353,9 +373,27 @@ def _extract_rows_expression() -> str:
 """
 
 
+def detect_fips_gateway_error(title: str, body_text: str) -> str | None:
+    text = f"{title}\n{body_text}".casefold()
+    if "502 bad gateway" in text:
+        return "FIPS returned 502 Bad Gateway."
+    if "bad gateway" in text and "nginx" in text:
+        return "FIPS gateway is unavailable."
+    return None
+
+
+def _raise_if_fips_unavailable(page: object) -> None:
+    title = page.title()
+    body_text = page.evaluate("document.body ? document.body.innerText.slice(0, 2000) : ''")
+    message = detect_fips_gateway_error(title, body_text)
+    if message:
+        raise RuntimeError(message)
+
+
 def _select_fips_databases(page: object, timeout_ms: int) -> None:
     page.goto(FIPS_DB_URL, wait_until="domcontentloaded", timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    _raise_if_fips_unavailable(page)
 
     title = page.get_by_text("Патентные документы РФ (рус.)", exact=True)
     if title.count():
@@ -380,47 +418,28 @@ def _select_fips_databases(page: object, timeout_ms: int) -> None:
             continue
 
 
-def _fill_search_form(page: object, query: str, timeout_ms: int) -> None:
-    page.goto(FIPS_SEARCH_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+def _open_search_form(page: object, timeout_ms: int) -> None:
+    sidebar_link = page.locator("#sidebarForm\\:searchLink")
+    if sidebar_link.count():
+        sidebar_link.first.click(timeout=timeout_ms)
+    else:
+        page.goto(FIPS_SEARCH_URL, wait_until="domcontentloaded", timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    _raise_if_fips_unavailable(page)
 
-    filled = page.evaluate(
-        """
-        (query) => {
-          const inputs = Array.from(document.querySelectorAll('input[type="text"], textarea'));
-          const candidates = inputs.filter((el) => {
-            const name = `${el.name || ''} ${el.id || ''} ${el.placeholder || ''}`.toLowerCase();
-            const hidden = el.offsetParent === null || el.disabled || el.readOnly;
-            const siteSearch = name === 'q' || name.includes('поиск по сайту');
-            return !hidden && !siteSearch;
-          });
-          const target = candidates[0];
-          if (!target) return false;
-          target.focus();
-          target.value = query;
-          target.dispatchEvent(new Event('input', { bubbles: true }));
-          target.dispatchEvent(new Event('change', { bubbles: true }));
-          return true;
-        }
-        """,
-        query,
-    )
-    if not filled:
+
+def _fill_search_form(page: object, query: str, timeout_ms: int) -> None:
+    _open_search_form(page, timeout_ms)
+
+    main_query = page.locator("textarea:visible").first
+    if not main_query.count():
         raise RuntimeError("FIPS search form input was not found")
+    main_query.fill(query, timeout=timeout_ms)
 
-    submitted = page.evaluate(
-        """
-        () => {
-          const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], a'));
-          const button = buttons.find((el) => /найти|поиск|искать/i.test(el.textContent || el.value || ''));
-          if (!button) return false;
-          button.click();
-          return true;
-        }
-        """
-    )
-    if not submitted:
+    search_button = page.locator('input[type="submit"][value="Поиск"]').first
+    if not search_button.count():
         raise RuntimeError("FIPS search submit control was not found")
+    search_button.click(timeout=timeout_ms)
 
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
 
