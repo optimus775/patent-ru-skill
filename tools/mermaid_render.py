@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shlex
 import shutil
@@ -71,7 +72,7 @@ def _mmdc_extra_args(
     height: int,
 ) -> list[str]:
     """Формирует параметры разрешения для mmdc."""
-    return [
+    args = [
         "-s",
         str(scale),
         "-w",
@@ -79,6 +80,10 @@ def _mmdc_extra_args(
         "-H",
         str(height),
     ]
+    puppeteer_config = os.environ.get("MERMAID_PUPPETEER_CONFIG", "").strip()
+    if puppeteer_config:
+        args.extend(["-p", puppeteer_config])
+    return args
 
 
 def _render_one_mermaid(

@@ -124,6 +124,7 @@ patent-ru-skill/
 - [SKILL.md](SKILL.md) - триггеры и основной workflow.
 - [INSTALL.md](INSTALL.md) - детали установки.
 - [tools/README.md](tools/README.md) - конвертация Markdown/Word, Office, mermaid и ФИПС.
+- [docs/e2e-testing.md](docs/e2e-testing.md) - полный E2E-прогон на гражданском IT/AI fixture.
 - [docs/PRD.md](docs/PRD.md) - продуктовая логика.
 - [docs/skill-structure.md](docs/skill-structure.md) - структура репозитория.
 - [prompts/template_reference.md](prompts/template_reference.md) - шаблоны описания, формулы, реферата и фигур.

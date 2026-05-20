@@ -50,6 +50,13 @@ python3 tools/mermaid_render.py -i draft.md -o out/final.md --no-docx
 
 Если один mermaid-блок не рендерится, его исходный fence сохраняется, а остальные блоки продолжают обрабатываться.
 
+В sandbox-limited Linux-окружениях можно передать Puppeteer config через переменную `MERMAID_PUPPETEER_CONFIG`:
+
+```bash
+MERMAID_PUPPETEER_CONFIG=puppeteer-no-sandbox.json \
+  python3 tools/mermaid_render.py -i draft.md -o out/final.md
+```
+
 ## md_to_docx.py
 
 Конвертирует Markdown в Word.
