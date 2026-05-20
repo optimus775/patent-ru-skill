@@ -15,6 +15,9 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from fips_search import (  # noqa: E402
     FipsHit,
+    FipsRefineQuery,
+    build_refine_queries,
+    build_refined_results,
     dedupe_hits,
     format_hits_line,
     hits_to_jsonable,
@@ -122,6 +125,97 @@ class FipsSearchTests(unittest.TestCase):
         self.assertEqual(hits[0].applicant, 'ООО "Тест"')
         self.assertEqual(hits[0].publication_date, "15.03.2024")
         self.assertIn("registers-doc-view", hits[0].source_url or "")
+
+    def test_parse_fips_modern_result_rows(self) -> None:
+        html = """
+        <form id="j_idt98">
+          <div class="table">
+            <div class="tr tit">
+              <div class="th"><b>№</b></div>
+              <div class="th"><b>Номер документа</b></div>
+              <div class="th"><b>Дата публикации</b></div>
+              <div class="th"><b>Изображение</b></div>
+              <div class="th"><b>Название</b></div>
+              <div class="th"><b>Библ-ка</b></div>
+            </div>
+            <a class="tr" data-index="3" href="document.xhtml?faces-redirect=true&amp;id=abc">
+              <div class="td">3.</div>
+              <div class="td" style="font-weight: bold;">2515997</div>
+              <div class="td" style="font-weight: bold;">(20.05.2014)</div>
+              <div class="td"></div>
+              <div class="td">АКТИВНОЕ УПРАВЛЕНИЕ ОЧЕРЕДЬЮ</div>
+              <div class="td" style="font-weight: bold;">РИ</div>
+            </a>
+          </div>
+        </form>
+        """
+
+        hits = parse_fips_html(html, "https://www1.fips.ru/iiss/search_res.xhtml")
+
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].publication_number, "RU2515997")
+        self.assertEqual(hits[0].publication_date, "20.05.2014")
+        self.assertEqual(hits[0].title, "АКТИВНОЕ УПРАВЛЕНИЕ ОЧЕРЕДЬЮ")
+        self.assertEqual(hits[0].database, "РИ")
+        self.assertIn("document.xhtml", hits[0].source_url or "")
+
+    def test_build_refine_queries_uses_fields_and_exclusions(self) -> None:
+        queries = build_refine_queries(
+            "управление очередью",
+            features=["диспетчеризация очередей", "приоритет обработки"],
+            effects=["снижение задержки"],
+            domain="сеть связи",
+            ipc=["H04W 28/10"],
+            excludes=["газоперекачивающ"],
+        )
+
+        displays = [query.display() for query in queries]
+        self.assertTrue(any("main:broad" in item for item in displays))
+        self.assertTrue(any('(54) Название="управление очередью" NOT газоперекачивающ' in item for item in displays))
+        self.assertTrue(any("Реферат=диспетчеризация очередей NOT газоперекачивающ" in item for item in displays))
+        self.assertTrue(any("Формула=снижение задержки NOT газоперекачивающ" in item for item in displays))
+        self.assertTrue(any("(51) МПК=H04W 28/10" in item for item in displays))
+
+    def test_build_refined_results_dedupes_and_scores(self) -> None:
+        broad = FipsRefineQuery("main:broad", "управление очередью")
+        title = FipsRefineQuery(
+            "title:управление очередью",
+            fields=(("(54) Название", '"управление очередью"'),),
+        )
+        weak = FipsRefineQuery("main:broad", "управление очередью")
+        hit = FipsHit(
+            publication_number="RU2515997",
+            title="АКТИВНОЕ УПРАВЛЕНИЕ ОЧЕРЕДЬЮ ДЛЯ ВОСХОДЯЩЕЙ ЛИНИИ СВЯЗИ",
+            abstract="Технический результат заключается в уменьшении задержки передачи сигналов.",
+            publication_date="20.05.2014",
+        )
+        duplicate = FipsHit(
+            publication_number="RU2515997",
+            title="Дубликат",
+            publication_date="20.05.2014",
+        )
+        excluded = FipsHit(
+            publication_number="RU2821718",
+            title="Способ снижения потребления топливного газа газоперекачивающими агрегатами",
+            publication_date="26.06.2024",
+        )
+
+        results = build_refined_results(
+            [(hit, broad), (duplicate, title), (excluded, weak)],
+            query="управление очередью",
+            features=["управление очередью"],
+            effects=["уменьшении задержки"],
+            excludes=["газоперекачивающ"],
+            top_k=10,
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["publication_number"], "RU2515997")
+        self.assertEqual(results[0]["rank"], 1)
+        self.assertGreater(results[0]["score"], results[1]["score"])
+        self.assertEqual(len(results[0]["matched_queries"]), 2)
+        self.assertTrue(any("признак" in reason for reason in results[0]["score_reasons"]))
+        self.assertTrue(any("штраф" in reason for reason in results[1]["score_reasons"]))
 
 
 if __name__ == "__main__":

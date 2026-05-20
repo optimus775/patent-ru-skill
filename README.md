@@ -29,6 +29,18 @@
 
 ## Установка
 
+### Codex
+
+Рекомендуемый способ установки для Codex — поместить репозиторий в каталог skills:
+
+```bash
+mkdir -p ~/.codex/skills
+git clone <repo-url> ~/.codex/skills/patent-ru-skill
+```
+
+Если используется нестандартный `CODEX_HOME`, устанавливайте в `$CODEX_HOME/skills/patent-ru-skill`.
+После перезапуска Codex skill должен быть доступен по имени `patent-ru-skill`.
+
 ### Claude Code
 
 ```bash

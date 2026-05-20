@@ -2,6 +2,24 @@
 
 Репозиторий является корнем Agent Skill: файл `SKILL.md` должен находиться в корне каталога skill.
 
+## Codex
+
+Рекомендуемый способ установки:
+
+```bash
+mkdir -p ~/.codex/skills
+git clone <repo-url> ~/.codex/skills/patent-ru-skill
+```
+
+Если `CODEX_HOME` переопределен, используйте:
+
+```bash
+mkdir -p "$CODEX_HOME/skills"
+git clone <repo-url> "$CODEX_HOME/skills/patent-ru-skill"
+```
+
+После перезапуска Codex skill должен быть доступен как `patent-ru-skill`.
+
 ## Claude Code
 
 Установка в проект:
