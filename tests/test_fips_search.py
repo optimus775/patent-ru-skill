@@ -21,6 +21,8 @@ from fips_search import (  # noqa: E402
     dedupe_hits,
     format_hits_line,
     hits_to_jsonable,
+    is_fips_session_closed_error,
+    is_retryable_fips_ui_error,
     load_browserless_endpoint,
     normalize_publication_number,
     parse_fips_html,
@@ -88,6 +90,21 @@ class FipsSearchTests(unittest.TestCase):
         self.assertNotIn("10.0.0.1", message)
         self.assertNotIn("3000", message)
         self.assertIn("[BROWSERLESS_WS_ENDPOINT]", message)
+
+    def test_detects_closed_browser_session_errors(self) -> None:
+        self.assertTrue(
+            is_fips_session_closed_error("Target page, context or browser has been closed")
+        )
+        self.assertFalse(is_fips_session_closed_error("FIPS returned no rows"))
+
+    def test_detects_retryable_fips_ui_errors(self) -> None:
+        self.assertTrue(
+            is_retryable_fips_ui_error(
+                '<div class="ui-dialog-mask"></div> intercepts pointer events'
+            )
+        )
+        self.assertTrue(is_retryable_fips_ui_error("Target closed"))
+        self.assertFalse(is_retryable_fips_ui_error("FIPS search form input was not found"))
 
     def test_dedupe_hits_prefers_first_match(self) -> None:
         hits = dedupe_hits(
@@ -159,7 +176,7 @@ class FipsSearchTests(unittest.TestCase):
         self.assertEqual(hits[0].database, "РИ")
         self.assertIn("document.xhtml", hits[0].source_url or "")
 
-    def test_build_refine_queries_uses_fields_and_exclusions(self) -> None:
+    def test_build_refine_queries_uses_fields_without_inline_exclusions(self) -> None:
         queries = build_refine_queries(
             "управление очередью",
             features=["диспетчеризация очередей", "приоритет обработки"],
@@ -171,10 +188,11 @@ class FipsSearchTests(unittest.TestCase):
 
         displays = [query.display() for query in queries]
         self.assertTrue(any("main:broad" in item for item in displays))
-        self.assertTrue(any('(54) Название="управление очередью" NOT газоперекачивающ' in item for item in displays))
-        self.assertTrue(any("Реферат=диспетчеризация очередей NOT газоперекачивающ" in item for item in displays))
-        self.assertTrue(any("Формула=снижение задержки NOT газоперекачивающ" in item for item in displays))
+        self.assertTrue(any('(54) Название="управление очередью"' in item for item in displays))
+        self.assertTrue(any("Реферат=диспетчеризация очередей" in item for item in displays))
+        self.assertTrue(any("Формула=снижение задержки" in item for item in displays))
         self.assertTrue(any("(51) МПК=H04W 28/10" in item for item in displays))
+        self.assertFalse(any("NOT газоперекачивающ" in item for item in displays))
 
     def test_build_refined_results_dedupes_and_scores(self) -> None:
         broad = FipsRefineQuery("main:broad", "управление очередью")
@@ -199,23 +217,29 @@ class FipsSearchTests(unittest.TestCase):
             title="Способ снижения потребления топливного газа газоперекачивающими агрегатами",
             publication_date="26.06.2024",
         )
+        partial_excluded = FipsHit(
+            publication_number="RU2724032",
+            title="Способ информирования инвалидов на пешеходных переходах и управления пешеходным светофором",
+            publication_date="18.06.2020",
+        )
 
         results = build_refined_results(
-            [(hit, broad), (duplicate, title), (excluded, weak)],
+            [(hit, broad), (duplicate, title), (excluded, weak), (partial_excluded, weak)],
             query="управление очередью",
             features=["управление очередью"],
             effects=["уменьшении задержки"],
-            excludes=["газоперекачивающ"],
+            excludes=["газоперекачивающ", "пешеходный светофор"],
             top_k=10,
         )
 
-        self.assertEqual(len(results), 2)
+        self.assertEqual(len(results), 3)
         self.assertEqual(results[0]["publication_number"], "RU2515997")
         self.assertEqual(results[0]["rank"], 1)
         self.assertGreater(results[0]["score"], results[1]["score"])
         self.assertEqual(len(results[0]["matched_queries"]), 2)
         self.assertTrue(any("признак" in reason for reason in results[0]["score_reasons"]))
         self.assertTrue(any("штраф" in reason for reason in results[1]["score_reasons"]))
+        self.assertTrue(any("частичный штраф" in reason for reason in results[2]["score_reasons"]))
 
 
 if __name__ == "__main__":

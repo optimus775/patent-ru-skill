@@ -38,6 +38,8 @@ PUBLICATION_DATE_FIELD_LABEL = "(45) Опубликовано"
 IPC_FIELD_LABEL = "(51) МПК"
 ABSTRACT_FIELD_LABEL = "Реферат"
 FORMULA_FIELD_LABEL = "Формула"
+DEFAULT_REFINE_QUERY_LIMIT = 0
+DEFAULT_DETAILS_LIMIT = 5
 
 
 @dataclass
@@ -144,6 +146,39 @@ def sanitize_error_message(message: str) -> str:
     return sanitized
 
 
+def is_fips_session_closed_error(value: object) -> bool:
+    text = str(value).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "target page, context or browser has been closed",
+            "target closed",
+            "browser has been closed",
+            "browser closed",
+            "context has been closed",
+            "page has been closed",
+        )
+    )
+
+
+def is_retryable_fips_ui_error(value: object) -> bool:
+    text = str(value).casefold()
+    if is_fips_session_closed_error(text):
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "intercepts pointer events",
+            "ui-dialog-mask",
+            "modal",
+            "locator.click",
+            "timeout",
+            "execution context was destroyed",
+            "most likely because of a navigation",
+        )
+    )
+
+
 def format_hits_line(items: Sequence[object]) -> str:
     return f"{OUTPUT_PREFIX} {json.dumps(list(items), ensure_ascii=False, sort_keys=True)}"
 
@@ -218,6 +253,10 @@ def _short_search_terms(terms: Sequence[str], max_words: int = 5) -> list[str]:
     return out
 
 
+def _has_cyrillic(value: str) -> bool:
+    return bool(re.search(r"[А-Яа-яЁё]", value))
+
+
 def build_refine_queries(
     query: str,
     features: Sequence[str] = (),
@@ -231,7 +270,6 @@ def build_refine_queries(
     effect_terms = _clean_terms(effects)
     domain_text = _clean_text(domain)
     ipc_terms = _clean_terms(ipc)
-    exclude_terms = _clean_terms(excludes)
     queries: list[FipsRefineQuery] = []
 
     def add(item: FipsRefineQuery) -> None:
@@ -248,37 +286,42 @@ def build_refine_queries(
             return
         queries.append(item)
 
-    add(FipsRefineQuery("main:broad", _append_exclusions(base_query, exclude_terms)))
-    phrase_query = _append_exclusions(_quote_phrase(base_query), exclude_terms)
-    add(FipsRefineQuery("main:phrase", phrase_query))
+    add(FipsRefineQuery("main:broad", base_query))
 
     if domain_text:
         add(
             FipsRefineQuery(
                 "main:domain",
-                _append_exclusions(_join_query_terms(base_query, domain_text), exclude_terms),
+                _join_query_terms(base_query, domain_text),
             )
         )
 
     for term in _short_search_terms([base_query, *feature_terms]):
+        if not _has_cyrillic(term):
+            continue
         add(
             FipsRefineQuery(
                 f"title:{term}",
-                fields=((TITLE_FIELD_LABEL, _append_exclusions(_quote_phrase(term), exclude_terms)),),
+                fields=((TITLE_FIELD_LABEL, _quote_phrase(term)),),
             )
         )
 
     for term in [*feature_terms, *effect_terms]:
-        field_query = _append_exclusions(term, exclude_terms)
+        if not _has_cyrillic(term):
+            continue
+        field_query = term
         add(FipsRefineQuery(f"abstract:{term}", fields=((ABSTRACT_FIELD_LABEL, field_query),)))
         add(FipsRefineQuery(f"formula:{term}", fields=((FORMULA_FIELD_LABEL, field_query),)))
+
+    phrase_query = _quote_phrase(base_query)
+    add(FipsRefineQuery("main:phrase", phrase_query))
 
     if ipc_terms:
         ipc_query = _join_or_terms(ipc_terms)
         add(
             FipsRefineQuery(
                 "ipc:main",
-                _append_exclusions(base_query, exclude_terms),
+                base_query,
                 ((IPC_FIELD_LABEL, ipc_query),),
             )
         )
@@ -286,7 +329,7 @@ def build_refine_queries(
             add(
                 FipsRefineQuery(
                     f"ipc:feature:{term}",
-                    _append_exclusions(term, exclude_terms),
+                    term,
                     ((IPC_FIELD_LABEL, ipc_query),),
                 )
             )
@@ -611,6 +654,8 @@ def _score_refined_item(
     blob = " ".join(part for part in (title, abstract, detail_text, ipc_text) if part)
     reasons: list[str] = []
     score = 0
+    base_matched = False
+    domain_matched = False
 
     matched_queries = item.get("matched_queries")
     if isinstance(matched_queries, list) and matched_queries:
@@ -621,14 +666,17 @@ def _score_refined_item(
     base = _clean_text(query) or ""
     if _contains_term(title, base):
         score += 8
+        base_matched = True
         _add_reason(reasons, "базовый запрос найден в названии")
     elif _contains_term(blob, base):
         score += 3
+        base_matched = True
         _add_reason(reasons, "базовый запрос найден в тексте документа")
     else:
         overlap = _term_overlap_score(blob, base)
         if overlap:
             score += overlap
+            base_matched = True
             _add_reason(reasons, "частичное совпадение с базовым запросом")
 
     for term in _clean_terms(features):
@@ -661,10 +709,22 @@ def _score_refined_item(
         domain_text = _clean_text(domain) or ""
         if _contains_term(title, domain_text):
             score += 5
+            domain_matched = True
             _add_reason(reasons, f"область применения в названии: {domain_text}")
         elif _contains_term(blob, domain_text):
             score += 3
+            domain_matched = True
             _add_reason(reasons, f"область применения в тексте: {domain_text}")
+        else:
+            domain_overlap = _term_overlap_score(blob, domain_text)
+            if domain_overlap >= 2:
+                score += 1
+                domain_matched = True
+                _add_reason(reasons, f"частичное совпадение области применения: {domain_text}")
+
+    if not base_matched and not domain_matched:
+        score -= 5
+        _add_reason(reasons, "штраф за отсутствие совпадения с базовой областью")
 
     for ipc_value in _clean_terms(ipc):
         if _normalize_match_text(ipc_value) in ipc_text or _normalize_match_text(ipc_value) in blob:
@@ -675,6 +735,9 @@ def _score_refined_item(
         if _contains_term(title, term) or _contains_term(abstract, term) or _contains_term(detail_text, term):
             score -= 10
             _add_reason(reasons, f"штраф за исключение: {term}")
+        elif _term_overlap_score(blob, term):
+            score -= 6
+            _add_reason(reasons, f"частичный штраф за исключение: {term}")
 
     return max(score, 0), reasons
 
@@ -814,6 +877,39 @@ def _raise_if_fips_unavailable(page: object) -> None:
         raise RuntimeError(message)
 
 
+def _close_safely(resource: object | None) -> None:
+    if resource is None:
+        return
+    try:
+        resource.close()
+    except Exception:
+        pass
+
+
+def _wait_for_fips_modal_idle(page: object, timeout_ms: int) -> None:
+    overlay = page.locator(".ui-widget-overlay.ui-dialog-mask, [id$='_modal'].ui-dialog-mask")
+    try:
+        if overlay.count():
+            overlay.first.wait_for(state="hidden", timeout=min(timeout_ms, 5_000))
+    except Exception:
+        pass
+
+
+def _click_locator(locator: object, timeout_ms: int) -> None:
+    click_timeout_ms = min(timeout_ms, 15_000)
+    try:
+        locator.click(timeout=click_timeout_ms)
+        return
+    except Exception as exc:
+        if is_fips_session_closed_error(exc) or "intercepts pointer events" not in str(exc).casefold():
+            raise
+        try:
+            locator.evaluate("(el) => el.click()")
+            return
+        except Exception:
+            raise exc
+
+
 def _select_fips_databases(page: object, timeout_ms: int) -> None:
     page.goto(FIPS_DB_URL, wait_until="domcontentloaded", timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
@@ -824,7 +920,7 @@ def _select_fips_databases(page: object, timeout_ms: int) -> None:
     ).first
     title.wait_for(state="visible", timeout=timeout_ms)
     if "closed" in (title.get_attribute("class") or ""):
-        title.click(timeout=timeout_ms)
+        _click_locator(title, timeout_ms)
         page.wait_for_timeout(500)
 
     grid = page.locator("#db-selection-form\\:dbsGrid1")
@@ -840,7 +936,8 @@ def _select_fips_databases(page: object, timeout_ms: int) -> None:
 
     proceed = page.locator('input[type="submit"][value="перейти к поиску"]').first
     proceed.wait_for(state="visible", timeout=timeout_ms)
-    proceed.click(timeout=timeout_ms)
+    _wait_for_fips_modal_idle(page, timeout_ms)
+    _click_locator(proceed, timeout_ms)
     page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
     _raise_if_fips_unavailable(page)
@@ -849,7 +946,8 @@ def _select_fips_databases(page: object, timeout_ms: int) -> None:
 def _open_search_form(page: object, timeout_ms: int) -> None:
     sidebar_link = page.locator("#sidebarForm\\:searchLink")
     if sidebar_link.count():
-        sidebar_link.first.click(timeout=timeout_ms)
+        _wait_for_fips_modal_idle(page, timeout_ms)
+        _click_locator(sidebar_link.first, timeout_ms)
     else:
         page.goto(FIPS_SEARCH_URL, wait_until="domcontentloaded", timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
@@ -913,7 +1011,8 @@ def _fill_search_form(page: object, query: str, timeout_ms: int) -> None:
     search_button = page.locator('input[type="submit"][value="Поиск"]').first
     if not search_button.count():
         raise RuntimeError("FIPS search submit control was not found")
-    search_button.click(timeout=timeout_ms)
+    _wait_for_fips_modal_idle(page, timeout_ms)
+    _click_locator(search_button, timeout_ms)
 
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
 
@@ -936,16 +1035,38 @@ def _execute_refine_query(page: object, refine_query: FipsRefineQuery, timeout_m
     search_button = page.locator('#searchForm input[type="submit"][value="Поиск"]').first
     if not search_button.count():
         raise RuntimeError("FIPS search submit control was not found")
-    search_button.click(timeout=timeout_ms)
+    _wait_for_fips_modal_idle(page, timeout_ms)
+    _click_locator(search_button, timeout_ms)
     page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
     _raise_if_fips_unavailable(page)
 
-    raw_rows = page.evaluate(_extract_rows_expression())
-    hits = dedupe_hits(_hit_from_raw(row) for row in raw_rows)
-    if not hits:
-        hits = parse_fips_html(page.content(), page.url)
-    return hits
+    return _extract_hits_from_results_page(page, timeout_ms)
+
+
+def _extract_hits_from_results_page(page: object, timeout_ms: int) -> list[FipsHit]:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            if attempt:
+                page.wait_for_timeout(1_000)
+            _wait_for_fips_modal_idle(page, timeout_ms)
+            raw_rows = page.evaluate(_extract_rows_expression())
+            hits = dedupe_hits(_hit_from_raw(row) for row in raw_rows)
+            if not hits:
+                hits = parse_fips_html(page.content(), page.url)
+            return hits
+        except Exception as exc:
+            last_error = exc
+            if attempt >= 2 or not is_retryable_fips_ui_error(exc):
+                break
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+                page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                pass
+    assert last_error is not None
+    raise last_error
 
 
 def _section_after_label(text: str, label_pattern: str, stop_pattern: str = r"\n\s*\(\d{2}\)|\n\s*‹‹") -> str | None:
@@ -1078,6 +1199,66 @@ def _enrich_hits_with_details(page: object, hits: Sequence[FipsHit], limit: int,
     return opened
 
 
+def _new_fips_search_page(browser: object, timeout_ms: int) -> tuple[object, object]:
+    context = browser.new_context(locale="ru-RU")
+    page = context.new_page()
+    try:
+        _select_fips_databases(page, timeout_ms)
+    except Exception:
+        _close_safely(context)
+        raise
+    return context, page
+
+
+def _hit_from_refined_item(item: dict[str, object]) -> FipsHit:
+    return FipsHit(
+        publication_number=_clean_text(str(item.get("publication_number") or "")),
+        application_number=_clean_text(str(item.get("application_number") or "")),
+        title=_clean_text(str(item.get("title") or "")),
+        abstract=_clean_text(str(item.get("abstract") or "")),
+        applicant=_clean_text(str(item.get("applicant") or "")),
+        inventor=_clean_text(str(item.get("inventor") or "")),
+        publication_date=_clean_text(str(item.get("publication_date") or "")),
+        filing_date=_clean_text(str(item.get("filing_date") or "")),
+        source_url=_clean_text(str(item.get("source_url") or "")),
+        database=_clean_text(str(item.get("database") or "")) or DEFAULT_DATABASE,
+    )
+
+
+def _apply_hit_to_refined_item(item: dict[str, object], hit: FipsHit) -> None:
+    hit_dict = asdict(hit)
+    for field_name, value in hit_dict.items():
+        if value and not item.get(field_name):
+            item[field_name] = value
+
+
+def _enrich_refined_items_with_details(
+    browser: object,
+    items: list[dict[str, object]],
+    details_limit: int,
+    timeout_ms: int,
+) -> None:
+    if details_limit <= 0 or not items:
+        return
+    detail_hits = [_hit_from_refined_item(item) for item in items[:details_limit]]
+    context = None
+    try:
+        context, page = _new_fips_search_page(browser, timeout_ms)
+        _enrich_hits_with_details(page, detail_hits, details_limit, timeout_ms)
+    finally:
+        _close_safely(context)
+
+    by_identity = {
+        _hit_identity(hit): hit
+        for hit in detail_hits
+        if _hit_identity(hit)
+    }
+    for item in items:
+        hit = by_identity.get(_hit_identity_from_dict(item))
+        if hit:
+            _apply_hit_to_refined_item(item, hit)
+
+
 def run_browser_search(query: str, limit: int, timeout_ms: int) -> list[FipsHit]:
     endpoint = load_browserless_endpoint()
     if not endpoint:
@@ -1090,19 +1271,15 @@ def run_browser_search(query: str, limit: int, timeout_ms: int) -> list[FipsHit]
 
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(endpoint, timeout=timeout_ms)
-        context = browser.new_context(locale="ru-RU")
-        page = context.new_page()
+        context = None
         try:
-            _select_fips_databases(page, timeout_ms)
+            context, page = _new_fips_search_page(browser, timeout_ms)
             _fill_search_form(page, query, timeout_ms)
-            raw_rows = page.evaluate(_extract_rows_expression())
-            hits = dedupe_hits(_hit_from_raw(row) for row in raw_rows)
-            if not hits:
-                hits = parse_fips_html(page.content(), page.url)
+            hits = _extract_hits_from_results_page(page, timeout_ms)
             return hits[:limit]
         finally:
-            context.close()
-            browser.close()
+            _close_safely(context)
+            _close_safely(browser)
 
 
 def run_browser_refined_search(
@@ -1115,6 +1292,7 @@ def run_browser_refined_search(
     top_k: int,
     details_limit: int,
     timeout_ms: int,
+    max_refine_queries: int | None = DEFAULT_REFINE_QUERY_LIMIT,
 ) -> list[dict[str, object]]:
     endpoint = load_browserless_endpoint()
     if not endpoint:
@@ -1126,33 +1304,91 @@ def run_browser_refined_search(
         raise RuntimeError("Install FIPS dependencies: pip install -r tools/requirements-fips.txt") from exc
 
     refine_queries = build_refine_queries(query, features, effects, domain, ipc, excludes)
+    if max_refine_queries:
+        refine_queries = refine_queries[:max_refine_queries]
     query_hits: list[tuple[FipsHit, FipsRefineQuery]] = []
     query_errors: list[str] = []
 
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(endpoint, timeout=timeout_ms)
-        context = browser.new_context(locale="ru-RU")
-        page = context.new_page()
+        context = None
+        page = None
+
+        def reset_context() -> None:
+            nonlocal context, page
+            _close_safely(context)
+            try:
+                context, page = _new_fips_search_page(browser, timeout_ms)
+            except Exception as exc:
+                if not is_fips_session_closed_error(exc):
+                    raise
+                reconnect_browser()
+
+        def reconnect_browser() -> None:
+            nonlocal browser, context, page
+            _close_safely(context)
+            _close_safely(browser)
+            browser = p.chromium.connect_over_cdp(endpoint, timeout=timeout_ms)
+            context, page = _new_fips_search_page(browser, timeout_ms)
+
         try:
-            _select_fips_databases(page, timeout_ms)
-            details_remaining = details_limit
+            reset_context()
             for refine_query in refine_queries:
-                try:
-                    hits = _execute_refine_query(page, refine_query, timeout_ms)
-                    if details_remaining > 0:
-                        details_remaining -= _enrich_hits_with_details(
-                            page,
-                            hits,
-                            details_remaining,
-                            timeout_ms,
-                        )
-                except Exception as exc:
-                    query_errors.append(f"{refine_query.display()}: {sanitize_error_message(str(exc))}")
+                hits: list[FipsHit] = []
+                last_error: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        if page is None:
+                            reset_context()
+                        hits = _execute_refine_query(page, refine_query, timeout_ms)
+                        last_error = None
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        if attempt == 0 and is_retryable_fips_ui_error(exc):
+                            if is_fips_session_closed_error(exc):
+                                reconnect_browser()
+                            else:
+                                reset_context()
+                            continue
+                        if is_fips_session_closed_error(exc):
+                            try:
+                                reconnect_browser()
+                            except Exception:
+                                page = None
+                        break
+                if last_error is not None:
+                    query_errors.append(
+                        f"{refine_query.display()}: {sanitize_error_message(str(last_error))}"
+                    )
                     continue
                 query_hits.extend((hit, refine_query) for hit in hits)
 
             items = _merge_refined_entries(query_hits)
             _rank_refined_items(items, query, features, effects, domain, ipc, excludes)
+            if not items and query_errors:
+                fallback_query = FipsRefineQuery(
+                    "fallback:broad",
+                    _clean_text(query) or "",
+                )
+                try:
+                    reset_context()
+                    hits = _execute_refine_query(page, fallback_query, timeout_ms)
+                    query_hits.extend((hit, fallback_query) for hit in hits)
+                    items = _merge_refined_entries(query_hits)
+                    _rank_refined_items(items, query, features, effects, domain, ipc, excludes)
+                except Exception as exc:
+                    query_errors.append(f"{fallback_query.display()}: {sanitize_error_message(str(exc))}")
+
+            if items and details_limit > 0:
+                try:
+                    _close_safely(context)
+                    context = None
+                    page = None
+                    _enrich_refined_items_with_details(browser, items, details_limit, timeout_ms)
+                    _rank_refined_items(items, query, features, effects, domain, ipc, excludes)
+                except Exception as exc:
+                    query_errors.append(f"details: {sanitize_error_message(str(exc))}")
 
             if not items and query_errors:
                 return [
@@ -1165,8 +1401,8 @@ def run_browser_refined_search(
 
             return [_strip_refined_item(item) for item in items[:top_k]]
         finally:
-            context.close()
-            browser.close()
+            _close_safely(context)
+            _close_safely(browser)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -1214,8 +1450,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--details-limit",
         type=int,
-        default=30,
+        default=DEFAULT_DETAILS_LIMIT,
         help="How many top refined results to open for detail enrichment, 0-100.",
+    )
+    parser.add_argument(
+        "--max-refine-queries",
+        type=int,
+        default=DEFAULT_REFINE_QUERY_LIMIT,
+        help="How many generated subqueries to run in --refine, 0 means all.",
     )
     parser.add_argument(
         "--timeout-ms",
@@ -1234,6 +1476,8 @@ def main(argv: list[str] | None = None) -> int:
     limit = max(1, min(100, int(args.limit)))
     top_k = max(1, min(100, int(args.top_k)))
     details_limit = max(0, min(100, int(args.details_limit)))
+    max_refine_queries = int(args.max_refine_queries)
+    max_refine_queries = None if max_refine_queries <= 0 else max(1, min(50, max_refine_queries))
     timeout_ms = max(5_000, int(args.timeout_ms))
 
     if not query:
@@ -1252,6 +1496,7 @@ def main(argv: list[str] | None = None) -> int:
                 top_k=top_k,
                 details_limit=details_limit,
                 timeout_ms=timeout_ms,
+                max_refine_queries=max_refine_queries,
             )
         else:
             hits = run_browser_search(query, limit, timeout_ms)
