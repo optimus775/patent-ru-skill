@@ -57,7 +57,7 @@ MERMAID_PUPPETEER_CONFIG=puppeteer-no-sandbox.json \
   python3 tools/mermaid_render.py -i draft.md -o out/final.md
 ```
 
-Если Chromium падает с `No usable sandbox` и переменная не задана, `mermaid_render.py` автоматически повторяет рендер с временным Puppeteer config, включающим `--no-sandbox`.
+В Linux, если `MERMAID_PUPPETEER_CONFIG` не задан, `mermaid_render.py` по умолчанию сразу передает временный Puppeteer config с `--no-sandbox`, чтобы не провоцировать `chrome-headless` coredump в sandbox-limited окружениях. Чтобы отключить это поведение, установите `MERMAID_PUPPETEER_NO_SANDBOX=0`.
 
 ## md_to_docx.py
 

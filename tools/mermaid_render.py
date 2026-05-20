@@ -159,6 +159,13 @@ def _write_no_sandbox_puppeteer_config() -> Path:
         return Path(tmp.name)
 
 
+def _default_no_sandbox_enabled() -> bool:
+    value = os.environ.get("MERMAID_PUPPETEER_NO_SANDBOX", "").strip().lower()
+    if value in ("0", "false", "no", "off"):
+        return False
+    return sys.platform.startswith("linux")
+
+
 def _render_one_mermaid(
     mermaid_source: str,
     png_path: Path,
@@ -178,8 +185,15 @@ def _render_one_mermaid(
     ) as tmp:
         tmp.write(mermaid_source.strip() + "\n")
         tmp_path = Path(tmp.name)
+    temp_puppeteer_config: Path | None = None
     try:
         extra = _mmdc_extra_args(scale=scale, width=width, height=height)
+        if (
+            not os.environ.get("MERMAID_PUPPETEER_CONFIG", "").strip()
+            and _default_no_sandbox_enabled()
+        ):
+            temp_puppeteer_config = _write_no_sandbox_puppeteer_config()
+            extra = [*extra, "-p", str(temp_puppeteer_config)]
         r = _run_mmdc(
             mmdc_base,
             tmp_path=tmp_path,
@@ -212,6 +226,11 @@ def _render_one_mermaid(
             err = (r.stderr or r.stdout or "").strip()
             raise RuntimeError(f"mmdc завершился с ошибкой (exit {r.returncode}): {err[:2000]}")
     finally:
+        if temp_puppeteer_config is not None:
+            try:
+                temp_puppeteer_config.unlink(missing_ok=True)
+            except OSError:
+                pass
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
