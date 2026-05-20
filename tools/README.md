@@ -57,6 +57,8 @@ MERMAID_PUPPETEER_CONFIG=puppeteer-no-sandbox.json \
   python3 tools/mermaid_render.py -i draft.md -o out/final.md
 ```
 
+Если Chromium падает с `No usable sandbox` и переменная не задана, `mermaid_render.py` автоматически повторяет рендер с временным Puppeteer config, включающим `--no-sandbox`.
+
 ## md_to_docx.py
 
 Конвертирует Markdown в Word.

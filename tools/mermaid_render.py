@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
@@ -86,6 +87,78 @@ def _mmdc_extra_args(
     return args
 
 
+def _run_mmdc(
+    mmdc_base: list[str],
+    *,
+    tmp_path: Path,
+    png_path: Path,
+    use_shell: bool,
+    extra: list[str],
+) -> subprocess.CompletedProcess[str]:
+    if use_shell:
+        parts = [
+            *mmdc_base,
+            "-i",
+            str(tmp_path),
+            "-o",
+            str(png_path),
+            "-b",
+            "white",
+            *extra,
+        ]
+        cmd = " ".join(shlex.quote(p) for p in parts)
+        return subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+    cmd = [
+        *mmdc_base,
+        "-i",
+        str(tmp_path),
+        "-o",
+        str(png_path),
+        "-b",
+        "white",
+        *extra,
+    ]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+
+def _looks_like_chromium_sandbox_error(output: str) -> bool:
+    return bool(
+        re.search(
+            r"No usable sandbox|--no-sandbox|Failed to launch the browser process",
+            output or "",
+            flags=re.I,
+        )
+    )
+
+
+def _write_no_sandbox_puppeteer_config() -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".json",
+        delete=False,
+        encoding="utf-8",
+    ) as tmp:
+        json.dump(
+            {"args": ["--no-sandbox", "--disable-setuid-sandbox"]},
+            tmp,
+            ensure_ascii=False,
+        )
+        tmp.write("\n")
+        return Path(tmp.name)
+
+
 def _render_one_mermaid(
     mermaid_source: str,
     png_path: Path,
@@ -107,42 +180,34 @@ def _render_one_mermaid(
         tmp_path = Path(tmp.name)
     try:
         extra = _mmdc_extra_args(scale=scale, width=width, height=height)
-        if use_shell:
-            parts = [
-                *mmdc_base,
-                "-i",
-                str(tmp_path),
-                "-o",
-                str(png_path),
-                "-b",
-                "white",
-                *extra,
-            ]
-            cmd = " ".join(shlex.quote(p) for p in parts)
-            r = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-        else:
-            cmd = [
-                *mmdc_base,
-                "-i",
-                str(tmp_path),
-                "-o",
-                str(png_path),
-                "-b",
-                "white",
-                *extra,
-            ]
-            r = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
+        r = _run_mmdc(
+            mmdc_base,
+            tmp_path=tmp_path,
+            png_path=png_path,
+            use_shell=use_shell,
+            extra=extra,
+        )
+        fallback_config: Path | None = None
+        if (
+            r.returncode != 0
+            and not os.environ.get("MERMAID_PUPPETEER_CONFIG", "").strip()
+            and _looks_like_chromium_sandbox_error(r.stderr or r.stdout or "")
+        ):
+            fallback_config = _write_no_sandbox_puppeteer_config()
+            retry_extra = [*extra, "-p", str(fallback_config)]
+            try:
+                r = _run_mmdc(
+                    mmdc_base,
+                    tmp_path=tmp_path,
+                    png_path=png_path,
+                    use_shell=use_shell,
+                    extra=retry_extra,
+                )
+            finally:
+                try:
+                    fallback_config.unlink(missing_ok=True)
+                except OSError:
+                    pass
         if r.returncode != 0:
             err = (r.stderr or r.stdout or "").strip()
             raise RuntimeError(f"mmdc завершился с ошибкой (exit {r.returncode}): {err[:2000]}")
