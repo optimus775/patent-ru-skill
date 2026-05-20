@@ -44,6 +44,7 @@ EXPECTED_PROMPTS = [
     "project_scan.md",
     "patent_points_analyzer.md",
     "prior_art_search.md",
+    "patentability_overlap_assessment.md",
     "disclosure_preview.md",
     "disclosure_builder.md",
     "template_reference.md",
@@ -457,21 +458,23 @@ flowchart TD
 Работай как с гражданским IT/AI-решением. Исключи беспилотники, военную, оружейную, боеприпасную, радиолокационную и double-use тематику.
 Тип: изобретение. Объект: группа решений способ + система; носитель добавлять только если он явно вытекает из раскрытия.
 Заявитель, авторы и контактные поля: "подлежит уточнению".
-Выход: полный Markdown + Word, фигуры, prior art notes, preview и финальная внутренняя проверка без включения служебных проверок в итоговый документ.
+Выход: полный Markdown + Word, фигуры, prior art notes, отдельный отчет о перекрытии, preview и финальная внутренняя проверка без включения служебных проверок в итоговый документ.
 """,
             encoding="utf-8",
         )
 
         prior_art_path = self.case_dir / "prior_art_notes.md"
         prior_art_path.write_text(build_prior_art_notes(), encoding="utf-8")
+        overlap_path = self.case_dir / f"patentability_overlap_report_{datetime.now().strftime('%Y%m%d%H%M%S')}.md"
+        overlap_path.write_text(build_overlap_report(), encoding="utf-8")
         preview_path = self.case_dir / "preview.md"
         preview_path.write_text(build_preview(), encoding="utf-8")
 
         self.record(
-            "Fixture, prompt, prior art notes и preview",
-            all(path.is_file() for path in [fixture_path, prompt_path, prior_art_path, preview_path]),
+            "Fixture, prompt, prior art notes, overlap report и preview",
+            all(path.is_file() for path in [fixture_path, prompt_path, prior_art_path, overlap_path, preview_path]),
             "Опорные материалы для E2E-сценария записаны.",
-            [fixture_path, prompt_path, prior_art_path, preview_path],
+            [fixture_path, prompt_path, prior_art_path, overlap_path, preview_path],
         )
 
     def build_disclosure_versions(self) -> None:
@@ -587,6 +590,19 @@ flowchart TD
 
         formula_text = extract_between(latest_text, "## Формула изобретения", "## Реферат")
         formula_has_brand = re.search(r"ControlNet|UniControlNet", formula_text, re.IGNORECASE) is not None
+        overlap_reports = sorted(self.case_dir.glob("patentability_overlap_report_*.md"))
+        overlap_text = overlap_reports[-1].read_text(encoding="utf-8", errors="replace") if overlap_reports else ""
+        overlap_report_ok = (
+            bool(overlap_reports)
+            and "Статус: частичное перекрытие" in overlap_text
+            and "не является официальным заключением" in overlap_text
+            and "Матрица признаков" in overlap_text
+        )
+        final_contains_overlap_report = "Предварительная техническая оценка перекрытия уровнем техники" in latest_text
+        final_mentions_partial_overlap = (
+            "частичное перекрытие" in latest_text
+            and "формировании дополнительных входных изображений" in latest_text
+        )
         latest_docx = self.version_outputs[-1][2]
         pngs = list(self.case_dir.glob("figures_v3_corrected/*.png"))
         self_check_report = self.case_dir / "self_check_report.json"
@@ -598,6 +614,10 @@ flowchart TD
                     "banned_topic_hits": banned_hits,
                     "cleanliness_hits": clean_hits,
                     "formula_contains_brand_names": formula_has_brand,
+                    "overlap_report_exists": bool(overlap_reports),
+                    "overlap_report_ok": overlap_report_ok,
+                    "final_contains_overlap_report": final_contains_overlap_report,
+                    "final_mentions_partial_overlap": final_mentions_partial_overlap,
                     "figures": [path.name for path in pngs],
                     "docx_exists": latest_docx.is_file(),
                     "revision_log_exists": (self.case_dir / "revision_dialog_log.md").is_file(),
@@ -614,6 +634,9 @@ flowchart TD
             and not banned_hits
             and not clean_hits
             and not formula_has_brand
+            and overlap_report_ok
+            and not final_contains_overlap_report
+            and final_mentions_partial_overlap
             and latest_docx.is_file()
             and bool(pngs)
             and (self.case_dir / "revision_dialog_log.md").is_file()
@@ -626,6 +649,9 @@ flowchart TD
                     f"banned_hits={banned_hits}",
                     f"cleanliness_hits={clean_hits}",
                     f"formula_has_brand={formula_has_brand}",
+                    f"overlap_report_ok={overlap_report_ok}",
+                    f"final_contains_overlap_report={final_contains_overlap_report}",
+                    f"final_mentions_partial_overlap={final_mentions_partial_overlap}",
                     f"docx_exists={latest_docx.is_file()}",
                     f"png_count={len(pngs)}",
                 ]
@@ -634,7 +660,7 @@ flowchart TD
             "Валидация итоговых артефактов",
             ok,
             details,
-            [latest_md, latest_docx, *pngs, self_check_report],
+            [latest_md, latest_docx, *pngs, *overlap_reports, self_check_report],
         )
 
     def failure_mode(self) -> None:
@@ -777,6 +803,42 @@ def build_prior_art_notes() -> str:
 """
 
 
+def build_overlap_report() -> str:
+    return """# Предварительная техническая оценка перекрытия уровнем техники
+
+## Ограничение
+
+Настоящий отчет является предварительной технической оценкой по найденным источникам. Он не является официальным заключением о патентоспособности, свободе использования, нарушении прав третьих лиц или вероятности выдачи патента.
+
+## Итоговый статус
+
+Статус: частичное перекрытие
+
+## Краткий вывод
+
+Ближайшие источники раскрывают отдельные элементы обучения нейронной сети с учетом сложных выборок и дополнительные подходы к регуляризации, но не выявлен один документ, раскрывающий всю комбинацию признаков: оценку качества каждой размеченной выборки, выбор трудных выборок, формирование дополнительных входных изображений по эталонной метке и добавление сформированных изображений в набор данных следующей эпохи.
+
+## Матрица признаков
+
+| Существенный признак | Ближайший источник | Степень раскрытия | Комментарий |
+|---|---|---|---|
+| Измерение качества прогнозирования для каждой размеченной выборки после эпохи обучения | WO2020167490A1 | частично раскрыт | Источник работает со сложными данными, но не раскрывает тот же цикл формирования дополнительных входных изображений. |
+| Выбор трудных выборок с наихудшим качеством или низкой вероятностью принадлежности распределению | WO2020167490A1 | частично раскрыт | Раскрыт общий выбор сложных данных, но без заявляемой связки с эталонной меткой. |
+| Формирование входных изображений по соответствующей эталонной метке | RU2641447C1 | не раскрыт | Документ относится к обучению нейронных сетей, но не раскрывает генерацию дополнительных входных изображений по эталонной метке. |
+| Добавление сформированных изображений к обучающим данным следующей эпохи | EP4254265A1 | частично раскрыт | Есть дополнительные обучающие механизмы, но нет заявляемого добавления сформированных изображений к набору данных. |
+
+## Источники, создающие риск перекрытия
+
+- WO2020167490A1: риск частичного перекрытия по выбору сложных входных данных.
+- RU2641447C1: общий риск по области обучения глубоких нейронных сетей.
+- EP4254265A1: общий риск по дополнительным обучающим механизмам.
+
+## Рекомендация для дальнейшей подготовки
+
+Продолжить подготовку комплекта, но в разделе уровня техники явно указать пересечение по выбору сложных выборок и сфокусировать формулу на формировании дополнительных входных изображений по эталонной метке с последующим добавлением к обучающим данным следующей эпохи.
+"""
+
+
 def build_preview() -> str:
     return """# Preview направления заявки
 
@@ -787,6 +849,7 @@ def build_preview() -> str:
 | Техническая проблема | Нестабильность качества прогнозирования на обучающих данных разной сложности |
 | Технический результат | Более стабильное качество прогнозирования при меньшей потребности во внешних дополнительных данных |
 | Ближайший уровень техники | WO2020167490A1 и RU2641447C1 |
+| Оценка перекрытия Step 5.5 | Частичное перекрытие: риск по выбору сложных данных, отличие в формировании дополнительных входных изображений по эталонной метке |
 
 Предполагаемый независимый пункт способа: выполняют эпоху обучения на размеченных выборках, измеряют качество прогнозирования для каждой выборки, выбирают трудные выборки, формируют дополнительные входные изображения по эталонным меткам трудных выборок, добавляют сформированные изображения к обучающим данным и повторяют цикл до выполнения критерия завершения.
 
@@ -842,6 +905,8 @@ def build_disclosure(*, include_poisson: bool, brand_in_claims: bool) -> str:
 Известны подходы, в которых качество модели улучшают за счет дополнительной разметки, регуляризации или повторного обучения на сложных примерах. В RU2641447C1 раскрыто обучение глубоких нейронных сетей с использованием распределений попарных мер схожести, однако такой подход не формирует дополнительные входные изображения по эталонным меткам трудных выборок.
 
 В WO2020167490A1 раскрыто поэтапное обучение модели с выявлением сложных входных данных. Недостаток данного подхода состоит в необходимости привлечения дополнительных данных, собранных или размеченных отдельно. В WO2021035193A1 используется активное обучение с неразмеченными выборками, что также предполагает наличие внешнего пула данных и получение эталонных меток для выбранных выборок.
+
+По предварительной технической оценке имеется частичное перекрытие с WO2020167490A1 в части выявления сложных входных данных. Отличие заявляемого решения состоит в формировании дополнительных входных изображений по эталонной метке трудной выборки и добавлении таких изображений к обучающим данным следующей эпохи.
 
 Ближайшие решения не устраняют полностью проблему нестабильного качества прогнозирования для выборок различной сложности без привлечения внешнего набора неразмеченных данных или отдельной ручной разметки.
 

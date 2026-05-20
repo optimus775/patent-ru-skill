@@ -16,6 +16,7 @@
 | `prompts/project_scan.md` | сканирование материалов и Office-конвертация |
 | `prompts/patent_points_analyzer.md` | выделение и выбор технического решения |
 | `prompts/prior_art_search.md` | поиск уровня техники через Google Patents и ФИПС |
+| `prompts/patentability_overlap_assessment.md` | предварительная техническая оценка полного или частичного перекрытия найденными источниками |
 | `prompts/disclosure_builder.md` | сборка описания, формулы, реферата и фигур |
 | `prompts/template_reference.md` | шаблоны и примеры формулировок |
 | `prompts/disclosure_self_check.md` | внутренняя проверка комплекта |
@@ -31,6 +32,7 @@
 ```text
 {название_изобретения}_{YYYYMMDDHHmmss}.md
 {название_изобретения}_{YYYYMMDDHHmmss}.docx
+patentability_overlap_report_{YYYYMMDDHHmmss}.md
 revision_dialog_log.md
 ```
 
